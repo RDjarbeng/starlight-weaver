@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Starlight Weaver</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Playfair Display', serif;
+            overflow: hidden;
+        }
+        canvas {
+            cursor: crosshair;
+            display: block;
+        }
+        .title-glow {
+            text-shadow: 0 0 8px rgba(255, 255, 255, 0.7), 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+        .btn-primary {
+             @apply bg-indigo-500 hover:bg-indigo-400 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-indigo-300;
+        }
+        .btn-secondary {
+            @apply bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg shadow-lg transition-transform transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-gray-400;
+        }
+        #levelSelectModal {
+            transition: opacity 0.3s ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- Main Game Container -->
+    <div id="game-container" class="w-full h-full max-w-7xl max-h-[90vh] bg-gradient-to-b from-[#0a0f1e] to-[#1a202c] rounded-2xl shadow-2xl shadow-indigo-500/20 flex flex-col overflow-hidden relative">
+        
+        <!-- Header -->
+        <header class="text-center p-4 border-b border-gray-700/50">
+            <h1 class="text-3xl md:text-4xl font-bold title-glow">Starlight Weaver</h1>
+            <p id="instructionText" class="text-sm text-gray-400 mt-1 h-5 transition-opacity duration-300"></p>
+        </header>
+
+        <!-- Canvas for the game -->
+        <main class="flex-grow relative">
+            <canvas id="skyCanvas" class="absolute top-0 left-0"></canvas>
+            <div id="winMessage" class="absolute inset-0 bg-black/50 flex-col items-center justify-center text-center text-3xl font-bold hidden title-glow animate-pulse">
+                <p>Constellation Complete!</p>
+            </div>
+        </main>
+
+        <!-- Footer / Controls -->
+        <footer class="p-3 bg-gray-900/30 border-t border-gray-700/50 flex justify-center items-center flex-wrap space-x-4">
+            <button id="levelSelectButton" class="btn-secondary">Select Level</button>
+            <button id="modeButton" class="btn-secondary">Free Play</button>
+            <button id="undoButton" class="btn-secondary">Undo</button>
+            <button id="resetButton" class="btn-primary">Reset Level</button>
+            <button id="nextLevelButton" class="btn-primary hidden">Next Level</button>
+        </footer>
+        
+        <!-- Level Select Modal -->
+        <div id="levelSelectModal" class="absolute inset-0 bg-black/80 backdrop-blur-sm flex-col items-center justify-center p-8 hidden z-10">
+            <h2 class="text-4xl font-bold title-glow mb-8">Select a Constellation</h2>
+            <div id="levelGrid" class="grid grid-cols-2 md:grid-cols-3 gap-6">
+                <!-- Level buttons will be injected here -->
+            </div>
+            <button id="closeModalButton" class="btn-primary mt-8">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('skyCanvas');
+        const ctx = canvas.getContext('2d');
+        const resetButton = document.getElementById('resetButton');
+        const modeButton = document.getElementById('modeButton');
+        const undoButton = document.getElementById('undoButton');
+        const nextLevelButton = document.getElementById('nextLevelButton');
+        const instructionText = document.getElementById('instructionText');
+        const winMessage = document.getElementById('winMessage');
+        const container = canvas.parentElement;
+
+        // Level Select UI
+        const levelSelectModal = document.getElementById('levelSelectModal');
+        const levelSelectButton = document.getElementById('levelSelectButton');
+        const closeModalButton = document.getElementById('closeModalButton');
+        const levelGrid = document.getElementById('levelGrid');
+
+        let userStars = [];
+        let userConnections = [];
+        let isDragging = false;
+        let startStar = null;
+        let mousePos = { x: 0, y: 0 };
+        
+        let gameMode = 'challenge';
+        let currentLevel = 0;
+        let unlockedLevel = 0;
+
+        const constellations = [
+            { name: "The Crown", stars: [ { x: 0.3, y: 0.4 }, { x: 0.4, y: 0.2 }, { x: 0.5, y: 0.3 }, { x: 0.6, y: 0.2 }, { x: 0.7, y: 0.4 } ], connections: [ { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 4 } ] },
+            { name: "The House", stars: [ { x: 0.3, y: 0.7 }, { x: 0.7, y: 0.7 }, { x: 0.7, y: 0.4 }, { x: 0.3, y: 0.4 }, { x: 0.5, y: 0.2 } ], connections: [ { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 0, end: 3 }, { start: 2, end: 4 }, { start: 3, end: 4 } ] },
+            { name: "The Arrow", stars: [ { x: 0.2, y: 0.5 }, { x: 0.5, y: 0.5 }, { x: 0.8, y: 0.5 }, { x: 0.65, y: 0.35 }, { x: 0.65, y: 0.65 } ], connections: [ { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 2, end: 4 } ] },
+            { name: "The Sword", stars: [ { x: 0.5, y: 0.2 }, { x: 0.5, y: 0.8 }, { x: 0.3, y: 0.65 }, { x: 0.7, y: 0.65 } ], connections: [ { start: 0, end: 1 }, { start: 2, end: 3 } ] },
+            { name: "The Fish", stars: [ { x: 0.2, y: 0.5 }, { x: 0.4, y: 0.3 }, { x: 0.6, y: 0.5 }, { x: 0.4, y: 0.7 }, { x: 0.8, y: 0.5 } ], connections: [ { start: 0, end: 1 }, { start: 1, end: 2 }, { start: 2, end: 3 }, { start: 3, end: 0 }, { start: 2, end: 4 } ] },
+            { name: "The Rocket", stars: [{x: 0.5, y: 0.2}, {x: 0.3, y: 0.5}, {x: 0.7, y: 0.5}, {x: 0.3, y: 0.8}, {x: 0.7, y: 0.8}], connections: [{start: 0, end: 1}, {start: 0, end: 2}, {start: 1, end: 2}, {start: 1, end: 3}, {start: 2, end: 4}, {start: 3, end: 4}]}
+        ];
+        let scaledConstellation = {};
+        let completedConnections = new Set();
+
+        // --- Progress Saving & Loading ---
+        function saveProgress() {
+            localStorage.setItem('starlightWeaverProgress', unlockedLevel);
+        }
+
+        function loadProgress() {
+            const savedLevel = localStorage.getItem('starlightWeaverProgress');
+            unlockedLevel = savedLevel ? parseInt(savedLevel) : 0;
+        }
+
+        // --- Game State & Initialization ---
+
+        function updateUI() {
+            if (gameMode === 'challenge') {
+                const levelName = constellations[currentLevel]?.name || 'Unknown';
+                instructionText.textContent = `Level ${currentLevel + 1}: Trace '${levelName}'`;
+                modeButton.textContent = 'Free Play';
+                resetButton.textContent = 'Reset Level';
+                nextLevelButton.classList.add('hidden');
+                winMessage.classList.add('hidden');
+                undoButton.classList.remove('hidden');
+                levelSelectButton.classList.remove('hidden');
+            } else {
+                instructionText.textContent = 'Click to place stars. Drag to connect them.';
+                modeButton.textContent = 'Challenge Mode';
+                resetButton.textContent = 'Clear Sky';
+                nextLevelButton.classList.add('hidden');
+                undoButton.classList.remove('hidden');
+                levelSelectButton.classList.add('hidden');
+            }
+        }
+        
+        function populateLevelSelect() {
+            levelGrid.innerHTML = ''; // Clear previous buttons
+            constellations.forEach((constellation, index) => {
+                const levelButton = document.createElement('button');
+                levelButton.innerHTML = `
+                    <div class="font-bold">Level ${index + 1}</div>
+                    <div class="text-sm opacity-80">${constellation.name}</div>
+                `;
+                
+                if (index <= unlockedLevel) {
+                    levelButton.className = 'btn-primary p-4 text-left relative';
+                    levelButton.onclick = () => {
+                        loadLevel(index);
+                        levelSelectModal.classList.add('hidden');
+                    };
+                } else {
+                    levelButton.className = 'btn-secondary p-4 text-left opacity-50 cursor-not-allowed relative';
+                    levelButton.innerHTML += `
+                        <div class="absolute inset-0 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                        </div>
+                    `;
+                    levelButton.disabled = true;
+                }
+                levelGrid.appendChild(levelButton);
+            });
+        }
+
+        function loadLevel(level) {
+            if (level >= constellations.length) {
+                // Handle game completion
+                gameMode = 'freeplay'; // Or show a special message
+                alert("You've completed all the constellations!");
+                updateUI();
+                return;
+            }
+            currentLevel = level % constellations.length;
+            userStars = [];
+            userConnections = [];
+            completedConnections.clear();
+            
+            const target = constellations[currentLevel];
+            const padding = 50;
+            scaledConstellation.stars = target.stars.map(s => ({
+                x: padding + s.x * (canvas.width - padding * 2),
+                y: padding + s.y * (canvas.height - padding * 2)
+            }));
+            scaledConstellation.connections = target.connections.map(c => ({...c, id: [c.start, c.end].sort((a,b)=>a-b) }));
+            
+            updateUI();
+            draw();
+        }
+        
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            loadLevel(currentLevel);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.onload = () => { 
+            loadProgress();
+            populateLevelSelect();
+            resizeCanvas(); 
+        };
+        // --- Drawing Logic ---
+
+        function draw() {
+            if (!ctx) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Challenge Mode: Draw target constellation outline
+            if (gameMode === 'challenge') {
+                ctx.strokeStyle = 'rgba(79, 70, 229, 0.3)'; // Faint indigo
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = 'rgba(79, 70, 229, 0.5)';
+                scaledConstellation.connections.forEach(conn => {
+                    const s1 = scaledConstellation.stars[conn.start];
+                    const s2 = scaledConstellation.stars[conn.end];
+                    ctx.beginPath();
+                    ctx.moveTo(s1.x, s1.y);
+                    ctx.lineTo(s2.x, s2.y);
+                    ctx.stroke();
+                });
+                
+                scaledConstellation.stars.forEach(star => {
+                    ctx.beginPath();
+                    ctx.arc(star.x, star.y, 5, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(79, 70, 229, 0.3)';
+                    ctx.fill();
+                });
+            }
+
+            // Draw user connections
+            ctx.strokeStyle = 'rgba(173, 216, 230, 0.4)';
+            ctx.lineWidth = 1;
+            ctx.shadowBlur = 5;
+            ctx.shadowColor = 'rgba(173, 216, 230, 0.8)';
+            userConnections.forEach(conn => {
+                const isCompleted = gameMode === 'challenge' && completedConnections.has(JSON.stringify(conn.id));
+                if (isCompleted) {
+                    ctx.strokeStyle = 'rgba(255, 255, 255, 1)';
+                    ctx.lineWidth = 2;
+                }
+                const star1 = userStars[conn.start];
+                const star2 = userStars[conn.end];
+                ctx.beginPath();
+                ctx.moveTo(star1.x, star1.y);
+                ctx.lineTo(star2.x, star2.y);
+                ctx.stroke();
+                // Reset for next line
+                if (isCompleted) {
+                    ctx.strokeStyle = 'rgba(173, 216, 230, 0.4)';
+                    ctx.lineWidth = 1;
+                }
+            });
+
+            // Draw user stars
+            userStars.forEach(star => {
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+                ctx.fillStyle = 'white';
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = 'white';
+                ctx.fill();
+            });
+            
+            // Draw temporary line while dragging
+            if (isDragging && startStar) {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.moveTo(startStar.x, startStar.y);
+                ctx.lineTo(mousePos.x, mousePos.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            ctx.shadowBlur = 0;
+        }
+
+        // --- Helper Functions ---
+
+        function getStarAt(x, y, starArray) {
+            for (let i = 0; i < starArray.length; i++) {
+                const star = starArray[i];
+                const dist = Math.sqrt((star.x - x)**2 + (star.y - y)**2);
+                if (dist < (star.radius || 5) + 10) { 
+                    return { star: star, index: i };
+                }
+            }
+            return null;
+        }
+        
+        function checkWinCondition() {
+            if (gameMode !== 'challenge') return;
+            if(completedConnections.size === scaledConstellation.connections.length) {
+                winMessage.classList.remove('hidden');
+                winMessage.classList.add('flex');
+                nextLevelButton.classList.remove('hidden');
+
+                // Unlock next level
+                const nextLevel = currentLevel + 1;
+                if (nextLevel > unlockedLevel) {
+                    unlockedLevel = nextLevel;
+                    saveProgress();
+                    populateLevelSelect();
+                }
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const clickedStarInfo = getStarAt(x, y, userStars);
+            if (clickedStarInfo) {
+                isDragging = true;
+                startStar = clickedStarInfo.star;
+            }
+        });
+
+        canvas.addEventListener('mouseup', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (isDragging && startStar) { // Connecting existing stars
+                const endStarInfo = getStarAt(x, y, userStars);
+                if (endStarInfo && endStarInfo.star !== startStar) {
+                    const startIndex = userStars.indexOf(startStar);
+                    const endIndex = endStarInfo.index;
+                    
+                    const connectionExists = userConnections.some(c => 
+                        (c.start === startIndex && c.end === endIndex) ||
+                        (c.start === endIndex && c.end === startIndex)
+                    );
+
+                    if (!connectionExists) {
+                        const newConnection = { start: startIndex, end: endIndex };
+                        if(gameMode === 'challenge') {
+                            const startTargetIndex = userStars[startIndex].targetIndex;
+                            const endTargetIndex = userStars[endIndex].targetIndex;
+                            const sortedId = [startTargetIndex, endTargetIndex].sort((a,b) => a - b);
+                            const isCorrect = scaledConstellation.connections.some(c => c.id[0] === sortedId[0] && c.id[1] === sortedId[1]);
+                            if(isCorrect) {
+                                completedConnections.add(JSON.stringify(sortedId));
+                                newConnection.id = sortedId;
+                            }
+                        }
+                        userConnections.push(newConnection);
+                        checkWinCondition();
+                    }
+                }
+            } else if (!isDragging) { // Placing a new star
+                if (gameMode === 'freeplay') {
+                    if (!getStarAt(x,y, userStars)) {
+                       userStars.push({ x: x, y: y, radius: Math.random() * 2 + 2 });
+                    }
+                } else { // Challenge mode star placement
+                    const targetStarInfo = getStarAt(x, y, scaledConstellation.stars);
+                    if(targetStarInfo && !userStars.some(s => s.targetIndex === targetStarInfo.index)) {
+                        userStars.push({
+                            x: targetStarInfo.star.x,
+                            y: targetStarInfo.star.y,
+                            radius: 3,
+                            targetIndex: targetStarInfo.index
+                        });
+                    }
+                }
+            }
+
+            isDragging = false;
+            startStar = null;
+            draw();
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            mousePos.x = e.clientX - rect.left;
+            mousePos.y = e.clientY - rect.top;
+            
+            const starPool = gameMode === 'challenge' ? scaledConstellation.stars : userStars;
+            const starUnderMouse = getStarAt(mousePos.x, mousePos.y, starPool);
+            canvas.style.cursor = starUnderMouse ? 'grab' : 'crosshair';
+
+            if (isDragging) { draw(); }
+        });
+
+        resetButton.addEventListener('click', () => {
+            if (gameMode === 'challenge') {
+                loadLevel(currentLevel);
+            } else {
+                userStars = [];
+                userConnections = [];
+                draw();
+            }
+        });
+
+        undoButton.addEventListener('click', () => {
+            if (userConnections.length > 0) {
+                const lastConnection = userConnections.pop();
+
+                if (gameMode === 'challenge' && lastConnection.id) {
+                    completedConnections.delete(JSON.stringify(lastConnection.id));
+                }
+                
+                if (winMessage.classList.contains('flex')) {
+                    winMessage.classList.remove('flex');
+                    winMessage.classList.add('hidden');
+                    nextLevelButton.classList.add('hidden');
+                }
+
+                draw();
+            }
+        });
+
+        modeButton.addEventListener('click', () => {
+            gameMode = gameMode === 'challenge' ? 'freeplay' : 'challenge';
+            if (gameMode === 'challenge') {
+                loadLevel(currentLevel);
+            } else {
+                userStars = [];
+                userConnections = [];
+                updateUI();
+                draw();
+            }
+        });
+        
+        nextLevelButton.addEventListener('click', () => {
+             loadLevel(currentLevel + 1);
+        });
+
+        // Modal listeners
+        levelSelectButton.addEventListener('click', () => {
+            populateLevelSelect(); // Refresh in case progress was made
+            levelSelectModal.classList.remove('hidden');
+        });
+
+        closeModalButton.addEventListener('click', () => {
+            levelSelectModal.classList.add('hidden');
+        });
+
+    </script>
+</body>
+</html>
+
+
